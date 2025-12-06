@@ -1,0 +1,142 @@
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Users table (extends Supabase auth.users)
+CREATE TABLE IF NOT EXISTS public.users (
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    email TEXT UNIQUE NOT NULL,
+    full_name TEXT,
+    phone TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+-- Parking Spaces table
+CREATE TABLE IF NOT EXISTS public.parking_spaces (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    host_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    description TEXT,
+    address TEXT NOT NULL,
+    latitude DOUBLE PRECISION NOT NULL,
+    longitude DOUBLE PRECISION NOT NULL,
+    price_per_hour DECIMAL(10, 2) NOT NULL,
+    price_per_day DECIMAL(10, 2) NOT NULL,
+    availability_start TIME,
+    availability_end TIME,
+    available_days INTEGER[], -- Array of day numbers (0-6, Sunday-Saturday)
+    is_active BOOLEAN DEFAULT true,
+    images TEXT[], -- Array of image URLs
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+-- Bookings table
+CREATE TABLE IF NOT EXISTS public.bookings (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    space_id UUID NOT NULL REFERENCES public.parking_spaces(id) ON DELETE CASCADE,
+    start_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    end_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    total_price DECIMAL(10, 2) NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+
+-- Enable Row Level Security
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.parking_spaces ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
+
+-- Users policies
+CREATE POLICY "Users can view their own profile"
+    ON public.users FOR SELECT
+    USING (auth.uid() = id);
+
+CREATE POLICY "Users can update their own profile"
+    ON public.users FOR UPDATE
+    USING (auth.uid() = id);
+
+CREATE POLICY "Users can insert their own profile"
+    ON public.users FOR INSERT
+    WITH CHECK (auth.uid() = id);
+
+-- Parking Spaces policies
+CREATE POLICY "Anyone can view active parking spaces"
+    ON public.parking_spaces FOR SELECT
+    USING (is_active = true OR host_id = auth.uid());
+
+CREATE POLICY "Hosts can insert their own parking spaces"
+    ON public.parking_spaces FOR INSERT
+    WITH CHECK (auth.uid() = host_id);
+
+CREATE POLICY "Hosts can update their own parking spaces"
+    ON public.parking_spaces FOR UPDATE
+    USING (auth.uid() = host_id);
+
+CREATE POLICY "Hosts can delete their own parking spaces"
+    ON public.parking_spaces FOR DELETE
+    USING (auth.uid() = host_id);
+
+-- Bookings policies
+CREATE POLICY "Users can view their own bookings"
+    ON public.bookings FOR SELECT
+    USING (auth.uid() = user_id OR auth.uid() IN (
+        SELECT host_id FROM public.parking_spaces WHERE id = space_id
+    ));
+
+CREATE POLICY "Users can create their own bookings"
+    ON public.bookings FOR INSERT
+    WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own bookings"
+    ON public.bookings FOR UPDATE
+    USING (auth.uid() = user_id);
+
+-- Create indexes for better query performance
+CREATE INDEX IF NOT EXISTS idx_parking_spaces_host_id ON public.parking_spaces(host_id);
+CREATE INDEX IF NOT EXISTS idx_parking_spaces_location ON public.parking_spaces(latitude, longitude);
+CREATE INDEX IF NOT EXISTS idx_parking_spaces_active ON public.parking_spaces(is_active);
+CREATE INDEX IF NOT EXISTS idx_bookings_user_id ON public.bookings(user_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_space_id ON public.bookings(space_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_status ON public.bookings(status);
+
+-- Function to automatically update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = TIMEZONE('utc'::text, NOW());
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Triggers to update updated_at
+CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON public.users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_parking_spaces_updated_at BEFORE UPDATE ON public.parking_spaces
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_bookings_updated_at BEFORE UPDATE ON public.bookings
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Function to automatically create user profile on signup
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO public.users (id, email, full_name)
+    VALUES (
+        NEW.id,
+        NEW.email,
+        COALESCE(NEW.raw_user_meta_data->>'full_name', '')
+    );
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Trigger to create user profile on signup
+CREATE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
