@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from "react-native";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/AppNavigator";
 import { supabase } from "../services/supabase";
@@ -26,30 +26,50 @@ const ManageListingsScreen = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    fetchListings();
-  }, []);
-
-  const fetchListings = async () => {
-    if (!user) return;
+  const fetchListings = useCallback(async () => {
+    if (!user) {
+      setLoading(false);
+      return;
+    }
 
     try {
+      console.log("Fetching listings for user:", user.id);
       const { data, error } = await supabase
         .from("parking_spaces")
         .select("*")
         .eq("host_id", user.id)
         .order("created_at", { ascending: false });
 
-      if (error) throw error;
+      if (error) {
+        console.error("Supabase error:", error);
+        throw error;
+      }
+
+      console.log("Fetched listings:", data?.length || 0);
       setListings(data || []);
     } catch (error: any) {
-      Alert.alert("Error", "Failed to load listings");
-      console.error(error);
+      console.error("Error fetching listings:", error);
+      Alert.alert("Error", error.message || "Failed to load listings");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      fetchListings();
+    }
+  }, [user, fetchListings]);
+
+  // Refresh listings when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      if (user) {
+        fetchListings();
+      }
+    }, [user, fetchListings])
+  );
 
   const handleToggleActive = async (space: ParkingSpace) => {
     try {
@@ -116,11 +136,23 @@ const ManageListingsScreen = () => {
 
         <View style={styles.priceRow}>
           <Text style={styles.priceText}>
-            ${item.price_per_hour}/hour • ${item.price_per_day}/day
+            {item.price_per_hour ? `LKR ${item.price_per_hour}/hour` : ""}
+            {item.price_per_hour && item.price_per_day ? " • " : ""}
+            {item.price_per_day ? `LKR ${item.price_per_day}/day` : ""}
           </Text>
         </View>
 
         <View style={styles.buttonRow}>
+          <TouchableOpacity
+            style={[styles.actionButton, styles.editButton]}
+            onPress={() =>
+              navigation.navigate("EditSpace", { spaceId: item.id })
+            }
+          >
+            <Text style={[styles.actionButtonText, styles.editButtonText]}>
+              Edit
+            </Text>
+          </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionButton, styles.toggleButton]}
             onPress={() => handleToggleActive(item)}
@@ -262,11 +294,17 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: "center",
   },
+  editButton: {
+    backgroundColor: "#007AFF",
+  },
   toggleButton: {
     backgroundColor: "#f0f0f0",
   },
   deleteButton: {
     backgroundColor: "#FF3B30",
+  },
+  editButtonText: {
+    color: "#fff",
   },
   actionButtonText: {
     fontWeight: "600",

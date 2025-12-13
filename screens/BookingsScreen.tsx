@@ -128,9 +128,24 @@ const BookingsScreen = () => {
             {formatDate(item.end_time)}
           </Text>
           <Text style={styles.detailText}>
-            <Text style={styles.detailLabel}>Total: </Text>$
+            <Text style={styles.detailLabel}>Vehicles: </Text>
+            {item.vehicle_count || 1}
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Total: </Text>LKR{" "}
             {item.total_price.toFixed(2)}
           </Text>
+          {(space?.price_per_hour || space?.price_per_day) && (
+            <Text style={styles.pricingInfo}>
+              {space.price_per_hour && (
+                <Text>LKR {space.price_per_hour}/hr</Text>
+              )}
+              {space.price_per_hour && space.price_per_day && " • "}
+              {space.price_per_day && (
+                <Text>LKR {space.price_per_day}/day</Text>
+              )}
+            </Text>
+          )}
         </View>
 
         {item.status === "confirmed" && (
@@ -236,6 +251,12 @@ const styles = StyleSheet.create({
   },
   detailLabel: {
     fontWeight: "600",
+  },
+  pricingInfo: {
+    fontSize: 12,
+    color: "#666",
+    marginTop: 4,
+    fontStyle: "italic",
   },
   cancelButton: {
     marginTop: 12,

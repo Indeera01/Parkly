@@ -17,6 +17,7 @@ export type RootStackParamList = {
   Main: undefined;
   SpaceDetail: { spaceId: string };
   AddSpace: undefined;
+  EditSpace: { spaceId: string };
 };
 
 export type MainTabParamList = {
@@ -89,6 +90,11 @@ export const AppNavigator = () => {
               name="AddSpace"
               component={AddSpaceScreen}
               options={{ headerShown: true, title: "Add Parking Space" }}
+            />
+            <Stack.Screen
+              name="EditSpace"
+              component={AddSpaceScreen}
+              options={{ headerShown: true, title: "Edit Parking Space" }}
             />
           </>
         )}
