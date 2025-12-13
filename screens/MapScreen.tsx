@@ -290,7 +290,7 @@ const MapScreen = () => {
               longitude: space.longitude,
             }}
             title={space.title}
-            description={`$${space.price_per_hour}/hour`}
+            description={`${space.price_per_hour} LKR/hour`}
             onPress={() => handleMarkerPress(space)}
           />
         ))}

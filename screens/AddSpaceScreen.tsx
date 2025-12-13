@@ -15,17 +15,29 @@ import {
 } from "react-native";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import * as Location from "expo-location";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/AppNavigator";
 import { supabase } from "../services/supabase";
 import { useAuth } from "../contexts/AuthContext";
 
 type AddSpaceNavigationProp = NativeStackNavigationProp<RootStackParamList>;
+type AddSpaceRouteProp = RouteProp<
+  RootStackParamList,
+  "AddSpace" | "EditSpace"
+>;
 
 const AddSpaceScreen = () => {
   const navigation = useNavigation<AddSpaceNavigationProp>();
+  const route = useRoute<AddSpaceRouteProp>();
   const { user } = useAuth();
+
+  // Get spaceId from route params if editing
+  const spaceId =
+    route.name === "EditSpace" && route.params?.spaceId
+      ? route.params.spaceId
+      : undefined;
+  const isEditMode = !!spaceId;
   const mapRef = useRef<MapView>(null);
   const [loading, setLoading] = useState(false);
   const [locationLoading, setLocationLoading] = useState(false);
@@ -39,6 +51,7 @@ const AddSpaceScreen = () => {
     longitude: 0,
     price_per_hour: "",
     price_per_day: "",
+    max_vehicles: "1",
     repeating: true, // Weekly repeating by default
   });
 
@@ -75,7 +88,85 @@ const AddSpaceScreen = () => {
 
   useEffect(() => {
     requestLocationPermission();
-  }, []);
+    if (isEditMode && spaceId) {
+      fetchSpaceData();
+    }
+  }, [isEditMode, spaceId]);
+
+  const fetchSpaceData = async () => {
+    if (!spaceId) return;
+
+    try {
+      const { data, error } = await supabase
+        .from("parking_spaces")
+        .select("*")
+        .eq("id", spaceId)
+        .single();
+
+      if (error) throw error;
+
+      if (data) {
+        // Populate form with existing data
+        setFormData({
+          title: data.title || "",
+          description: data.description || "",
+          address: data.address || "",
+          latitude: data.latitude || 0,
+          longitude: data.longitude || 0,
+          price_per_hour: data.price_per_hour?.toString() || "",
+          price_per_day: data.price_per_day?.toString() || "",
+          max_vehicles: data.max_vehicles?.toString() || "1",
+          repeating: true, // Default, can be enhanced later
+        });
+
+        // Set day availability
+        const newDayAvailability: {
+          [key: number]: {
+            enabled: boolean;
+            startTime: string;
+            endTime: string;
+          };
+        } = {
+          0: { enabled: false, startTime: "09:00", endTime: "18:00" },
+          1: { enabled: false, startTime: "09:00", endTime: "18:00" },
+          2: { enabled: false, startTime: "09:00", endTime: "18:00" },
+          3: { enabled: false, startTime: "09:00", endTime: "18:00" },
+          4: { enabled: false, startTime: "09:00", endTime: "18:00" },
+          5: { enabled: false, startTime: "09:00", endTime: "18:00" },
+          6: { enabled: false, startTime: "09:00", endTime: "18:00" },
+        };
+
+        // Enable days that are in available_days
+        if (data.available_days && Array.isArray(data.available_days)) {
+          data.available_days.forEach((day: number) => {
+            if (newDayAvailability[day]) {
+              newDayAvailability[day] = {
+                enabled: true,
+                startTime: data.availability_start || "09:00",
+                endTime: data.availability_end || "18:00",
+              };
+            }
+          });
+        }
+
+        setDayAvailability(newDayAvailability);
+
+        // Update map location
+        if (data.latitude && data.longitude && mapRef.current) {
+          const region: Region = {
+            latitude: data.latitude,
+            longitude: data.longitude,
+            latitudeDelta: 0.01,
+            longitudeDelta: 0.01,
+          };
+          mapRef.current.animateToRegion(region, 500);
+        }
+      }
+    } catch (error: any) {
+      console.error("Error fetching space data:", error);
+      Alert.alert("Error", "Failed to load parking space data");
+    }
+  };
 
   const requestLocationPermission = async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
@@ -269,6 +360,13 @@ const AddSpaceScreen = () => {
       return;
     }
 
+    // Validate max_vehicles
+    const maxVehicles = parseInt(formData.max_vehicles, 10);
+    if (isNaN(maxVehicles) || maxVehicles < 1) {
+      Alert.alert("Error", "Maximum vehicles must be at least 1");
+      return;
+    }
+
     // Get enabled days
     const enabledDays = Object.keys(dayAvailability)
       .map(Number)
@@ -295,32 +393,52 @@ const AddSpaceScreen = () => {
       const firstEnabledDay = enabledDays[0];
       const mainAvailability = dayAvailability[firstEnabledDay];
 
-      const { error } = await supabase.from("parking_spaces").insert([
-        {
-          host_id: user.id,
-          title: formData.title,
-          description: formData.description || null,
-          address: formData.address,
-          latitude: formData.latitude,
-          longitude: formData.longitude,
-          price_per_hour: formData.price_per_hour
-            ? parseFloat(formData.price_per_hour)
-            : null,
-          price_per_day: formData.price_per_day
-            ? parseFloat(formData.price_per_day)
-            : null,
-          availability_start: mainAvailability.startTime || null,
-          availability_end: mainAvailability.endTime || null,
-          available_days: enabledDays,
-          is_active: true,
-        },
-      ]);
+      const spaceData = {
+        title: formData.title,
+        description: formData.description || null,
+        address: formData.address,
+        latitude: formData.latitude,
+        longitude: formData.longitude,
+        price_per_hour: formData.price_per_hour
+          ? parseFloat(formData.price_per_hour)
+          : null,
+        price_per_day: formData.price_per_day
+          ? parseFloat(formData.price_per_day)
+          : null,
+        max_vehicles: maxVehicles,
+        availability_start: mainAvailability.startTime || null,
+        availability_end: mainAvailability.endTime || null,
+        available_days: enabledDays,
+      };
 
-      if (error) throw error;
+      if (isEditMode && spaceId) {
+        // Update existing space
+        const { error } = await supabase
+          .from("parking_spaces")
+          .update(spaceData)
+          .eq("id", spaceId);
 
-      Alert.alert("Success", "Parking space added successfully!", [
-        { text: "OK", onPress: () => navigation.goBack() },
-      ]);
+        if (error) throw error;
+
+        Alert.alert("Success", "Parking space updated successfully!", [
+          { text: "OK", onPress: () => navigation.goBack() },
+        ]);
+      } else {
+        // Insert new space
+        const { error } = await supabase.from("parking_spaces").insert([
+          {
+            ...spaceData,
+            host_id: user.id,
+            is_active: true,
+          },
+        ]);
+
+        if (error) throw error;
+
+        Alert.alert("Success", "Parking space added successfully!", [
+          { text: "OK", onPress: () => navigation.goBack() },
+        ]);
+      }
     } catch (error: any) {
       Alert.alert("Error", error.message || "Failed to add parking space");
       console.error(error);
@@ -459,6 +577,20 @@ const AddSpaceScreen = () => {
             keyboardType="decimal-pad"
           />
 
+          <Text style={styles.label}>Maximum Vehicles *</Text>
+          <Text style={styles.instruction}>
+            How many vehicles can be parked in this space?
+          </Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g., 2"
+            value={formData.max_vehicles}
+            onChangeText={(text) =>
+              setFormData({ ...formData, max_vehicles: text })
+            }
+            keyboardType="number-pad"
+          />
+
           <View style={styles.availabilitySection}>
             <View style={styles.availabilityHeader}>
               <Text style={styles.label}>Availability *</Text>
@@ -539,7 +671,9 @@ const AddSpaceScreen = () => {
             {loading ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={styles.submitButtonText}>Add Parking Space</Text>
+              <Text style={styles.submitButtonText}>
+                {isEditMode ? "Update Parking Space" : "Add Parking Space"}
+              </Text>
             )}
           </TouchableOpacity>
         </View>
