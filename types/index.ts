@@ -14,11 +14,17 @@ export interface ParkingSpace {
   address: string;
   latitude: number;
   longitude: number;
-  price_per_hour: number;
-  price_per_day: number;
+  price_per_hour?: number | null; // Nullable - at least one price required
+  price_per_day?: number | null; // Nullable - at least one price required
   availability_start?: string; // Time of day (HH:mm)
   availability_end?: string; // Time of day (HH:mm)
   available_days?: number[]; // 0-6 (Sunday-Saturday)
+  repeating_weekly?: boolean; // Whether availability repeats weekly
+  day_availability_schedule?: {
+    // Per-day availability schedule (JSONB)
+    [key: number]: { startTime: string; endTime: string };
+  };
+  max_vehicles?: number; // Maximum number of vehicles that can be parked
   is_active: boolean;
   images?: string[];
   created_at: string;
@@ -31,6 +37,7 @@ export interface Booking {
   space_id: string;
   start_time: string;
   end_time: string;
+  vehicle_count: number; // Number of vehicles in this booking
   total_price: number;
   status: "pending" | "confirmed" | "cancelled" | "completed";
   created_at: string;
