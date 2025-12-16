@@ -63,6 +63,13 @@ const AddSpaceScreen = () => {
   >(null);
   const [tempTime, setTempTime] = useState({ hour: 9, minute: 0 });
 
+  // Calendar modal state for non-repeating dates
+  const [calendarVisible, setCalendarVisible] = useState(false);
+  const [selectedDates, setSelectedDates] = useState<{
+    [date: string]: { startTime: string; endTime: string };
+  }>({});
+  const [editingDate, setEditingDate] = useState<string | null>(null);
+
   // Day availability: 0=Sunday, 1=Monday, ..., 6=Saturday
   const [dayAvailability, setDayAvailability] = useState<{
     [key: number]: { enabled: boolean; startTime: string; endTime: string };
@@ -106,6 +113,22 @@ const AddSpaceScreen = () => {
       if (error) throw error;
 
       if (data) {
+        // Determine if repeating or non-repeating
+        // Check repeating_weekly field, or infer from day_availability_schedule structure
+        let isRepeating = data.repeating_weekly !== false;
+        if (
+          data.day_availability_schedule &&
+          data.repeating_weekly === undefined
+        ) {
+          // Infer from schedule: if keys are numbers (0-6), it's repeating; if dates (YYYY-MM-DD), it's non-repeating
+          const keys = Object.keys(data.day_availability_schedule);
+          if (keys.length > 0) {
+            const firstKey = keys[0];
+            // Check if first key is a date string (YYYY-MM-DD format)
+            isRepeating = !firstKey.match(/^\d{4}-\d{2}-\d{2}$/);
+          }
+        }
+
         // Populate form with existing data
         setFormData({
           title: data.title || "",
@@ -116,40 +139,76 @@ const AddSpaceScreen = () => {
           price_per_hour: data.price_per_hour?.toString() || "",
           price_per_day: data.price_per_day?.toString() || "",
           max_vehicles: data.max_vehicles?.toString() || "1",
-          repeating: true, // Default, can be enhanced later
+          repeating: isRepeating,
         });
 
-        // Set day availability
-        const newDayAvailability: {
-          [key: number]: {
-            enabled: boolean;
-            startTime: string;
-            endTime: string;
+        if (isRepeating) {
+          // Set day availability for repeating schedule
+          const newDayAvailability: {
+            [key: number]: {
+              enabled: boolean;
+              startTime: string;
+              endTime: string;
+            };
+          } = {
+            0: { enabled: false, startTime: "09:00", endTime: "18:00" },
+            1: { enabled: false, startTime: "09:00", endTime: "18:00" },
+            2: { enabled: false, startTime: "09:00", endTime: "18:00" },
+            3: { enabled: false, startTime: "09:00", endTime: "18:00" },
+            4: { enabled: false, startTime: "09:00", endTime: "18:00" },
+            5: { enabled: false, startTime: "09:00", endTime: "18:00" },
+            6: { enabled: false, startTime: "09:00", endTime: "18:00" },
           };
-        } = {
-          0: { enabled: false, startTime: "09:00", endTime: "18:00" },
-          1: { enabled: false, startTime: "09:00", endTime: "18:00" },
-          2: { enabled: false, startTime: "09:00", endTime: "18:00" },
-          3: { enabled: false, startTime: "09:00", endTime: "18:00" },
-          4: { enabled: false, startTime: "09:00", endTime: "18:00" },
-          5: { enabled: false, startTime: "09:00", endTime: "18:00" },
-          6: { enabled: false, startTime: "09:00", endTime: "18:00" },
-        };
 
-        // Enable days that are in available_days
-        if (data.available_days && Array.isArray(data.available_days)) {
-          data.available_days.forEach((day: number) => {
-            if (newDayAvailability[day]) {
-              newDayAvailability[day] = {
-                enabled: true,
-                startTime: data.availability_start || "09:00",
-                endTime: data.availability_end || "18:00",
-              };
-            }
-          });
+          // Load from day_availability_schedule if available, otherwise use available_days
+          if (data.day_availability_schedule) {
+            Object.keys(data.day_availability_schedule).forEach((dayKey) => {
+              const dayNum = parseInt(dayKey, 10);
+              if (!isNaN(dayNum) && dayNum >= 0 && dayNum <= 6) {
+                const schedule = data.day_availability_schedule[dayNum];
+                newDayAvailability[dayNum] = {
+                  enabled: true,
+                  startTime: schedule.startTime || "09:00",
+                  endTime: schedule.endTime || "18:00",
+                };
+              }
+            });
+          } else if (
+            data.available_days &&
+            Array.isArray(data.available_days)
+          ) {
+            // Fallback to available_days
+            data.available_days.forEach((day: number) => {
+              if (newDayAvailability[day]) {
+                newDayAvailability[day] = {
+                  enabled: true,
+                  startTime: data.availability_start || "09:00",
+                  endTime: data.availability_end || "18:00",
+                };
+              }
+            });
+          }
+
+          setDayAvailability(newDayAvailability);
+        } else {
+          // Load non-repeating dates from day_availability_schedule
+          if (data.day_availability_schedule) {
+            const dateSchedule: {
+              [date: string]: { startTime: string; endTime: string };
+            } = {};
+            Object.keys(data.day_availability_schedule).forEach((dateKey) => {
+              // Check if it's a date string (YYYY-MM-DD format)
+              if (dateKey.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                const schedule = data.day_availability_schedule[dateKey];
+                dateSchedule[dateKey] = {
+                  startTime: schedule.startTime || "09:00",
+                  endTime: schedule.endTime || "18:00",
+                };
+              }
+            });
+            setSelectedDates(dateSchedule);
+          }
         }
-
-        setDayAvailability(newDayAvailability);
 
         // Update map location
         if (data.latitude && data.longitude && mapRef.current) {
@@ -305,11 +364,25 @@ const AddSpaceScreen = () => {
   };
 
   const confirmTimeSelection = () => {
-    if (editingDay !== null && editingField) {
+    if (editingField) {
       const timeString = `${String(tempTime.hour).padStart(2, "0")}:${String(
         tempTime.minute
       ).padStart(2, "0")}`;
-      updateDayTime(editingDay, editingField, timeString);
+
+      if (editingDate) {
+        // Update time for a specific date (non-repeating)
+        setSelectedDates({
+          ...selectedDates,
+          [editingDate]: {
+            ...selectedDates[editingDate],
+            [editingField]: timeString,
+          },
+        });
+        setEditingDate(null);
+      } else if (editingDay !== null) {
+        // Update time for a day of week (repeating)
+        updateDayTime(editingDay, editingField, timeString);
+      }
     }
     setTimePickerVisible(false);
     setEditingDay(null);
@@ -336,6 +409,51 @@ const AddSpaceScreen = () => {
 
   const generateMinutes = () => {
     return Array.from({ length: 60 }, (_, i) => i);
+  };
+
+  // Calendar functions
+  const formatDateString = (date: Date): string => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const toggleDateSelection = (date: Date) => {
+    const dateStr = formatDateString(date);
+    const newDates = { ...selectedDates };
+
+    if (newDates[dateStr]) {
+      delete newDates[dateStr];
+    } else {
+      newDates[dateStr] = {
+        startTime: "09:00",
+        endTime: "18:00",
+      };
+    }
+
+    setSelectedDates(newDates);
+  };
+
+  const isDateSelected = (date: Date): boolean => {
+    const dateStr = formatDateString(date);
+    return !!selectedDates[dateStr];
+  };
+
+  const generateCalendarDays = (): Date[] => {
+    const today = new Date();
+    const days: Date[] = [];
+    const startDate = new Date(today);
+    startDate.setDate(today.getDate() - today.getDay()); // Start from Sunday of current week
+
+    // Generate 60 days (about 2 months)
+    for (let i = 0; i < 60; i++) {
+      const date = new Date(startDate);
+      date.setDate(startDate.getDate() + i);
+      days.push(date);
+    }
+
+    return days;
   };
 
   const handleSubmit = async () => {
@@ -367,33 +485,9 @@ const AddSpaceScreen = () => {
       return;
     }
 
-    // Get enabled days
-    const enabledDays = Object.keys(dayAvailability)
-      .map(Number)
-      .filter((day) => dayAvailability[day].enabled);
-
-    if (enabledDays.length === 0) {
-      Alert.alert("Error", "Please select at least one available day");
-      return;
-    }
-
-    // Validate times for enabled days
-    for (const day of enabledDays) {
-      const dayData = dayAvailability[day];
-      if (!dayData.startTime || !dayData.endTime) {
-        Alert.alert("Error", `Please set times for ${daysOfWeek[day].label}`);
-        return;
-      }
-    }
-
     setLoading(true);
     try {
-      // For now, use the first enabled day's time as the main availability
-      // (This can be enhanced later with a proper schema for per-day times)
-      const firstEnabledDay = enabledDays[0];
-      const mainAvailability = dayAvailability[firstEnabledDay];
-
-      const spaceData = {
+      let spaceData: any = {
         title: formData.title,
         description: formData.description || null,
         address: formData.address,
@@ -406,10 +500,78 @@ const AddSpaceScreen = () => {
           ? parseFloat(formData.price_per_day)
           : null,
         max_vehicles: maxVehicles,
-        availability_start: mainAvailability.startTime || null,
-        availability_end: mainAvailability.endTime || null,
-        available_days: enabledDays,
+        repeating_weekly: formData.repeating,
       };
+
+      if (formData.repeating) {
+        // Repeating weekly schedule
+        const enabledDays = Object.keys(dayAvailability)
+          .map(Number)
+          .filter((day) => dayAvailability[day].enabled);
+
+        if (enabledDays.length === 0) {
+          Alert.alert("Error", "Please select at least one available day");
+          setLoading(false);
+          return;
+        }
+
+        // Validate times for enabled days
+        for (const day of enabledDays) {
+          const dayData = dayAvailability[day];
+          if (!dayData.startTime || !dayData.endTime) {
+            Alert.alert(
+              "Error",
+              `Please set times for ${daysOfWeek[day].label}`
+            );
+            setLoading(false);
+            return;
+          }
+        }
+
+        // Build day_availability_schedule for repeating schedule
+        const daySchedule: {
+          [key: number]: { startTime: string; endTime: string };
+        } = {};
+        enabledDays.forEach((day) => {
+          daySchedule[day] = {
+            startTime: dayAvailability[day].startTime,
+            endTime: dayAvailability[day].endTime,
+          };
+        });
+
+        // Use first enabled day's time as main availability (for backward compatibility)
+        const firstEnabledDay = enabledDays[0];
+        const mainAvailability = dayAvailability[firstEnabledDay];
+
+        spaceData.availability_start = mainAvailability.startTime || null;
+        spaceData.availability_end = mainAvailability.endTime || null;
+        spaceData.available_days = enabledDays;
+        spaceData.day_availability_schedule = daySchedule;
+      } else {
+        // Non-repeating schedule - specific dates
+        const dateKeys = Object.keys(selectedDates);
+        if (dateKeys.length === 0) {
+          Alert.alert("Error", "Please select at least one available date");
+          setLoading(false);
+          return;
+        }
+
+        // Validate times for selected dates
+        for (const date of dateKeys) {
+          const dateData = selectedDates[date];
+          if (!dateData.startTime || !dateData.endTime) {
+            Alert.alert("Error", `Please set times for ${date}`);
+            setLoading(false);
+            return;
+          }
+        }
+
+        // Build day_availability_schedule for non-repeating schedule
+        spaceData.day_availability_schedule = selectedDates;
+        spaceData.available_days = null;
+        spaceData.availability_start = null;
+        spaceData.availability_end = null;
+      }
 
       if (isEditMode && spaceId) {
         // Update existing space
@@ -595,7 +757,9 @@ const AddSpaceScreen = () => {
             <View style={styles.availabilityHeader}>
               <Text style={styles.label}>Availability *</Text>
               <View style={styles.repeatToggle}>
-                <Text style={styles.repeatLabel}>Repeat Weekly</Text>
+                <Text style={styles.repeatLabel}>
+                  {formData.repeating ? "Repeating Weekly" : "Specific Dates"}
+                </Text>
                 <Switch
                   value={formData.repeating}
                   onValueChange={(value) =>
@@ -607,60 +771,158 @@ const AddSpaceScreen = () => {
               </View>
             </View>
 
-            <Text style={styles.instruction}>
-              Select days and set times for each day
-            </Text>
+            {formData.repeating ? (
+              <>
+                <Text style={styles.instruction}>
+                  Select days and set times for each day
+                </Text>
 
-            {daysOfWeek.map((day) => {
-              const dayData = dayAvailability[day.value];
-              return (
-                <View key={day.value} style={styles.dayRow}>
-                  <TouchableOpacity
-                    style={[
-                      styles.dayToggle,
-                      dayData.enabled && styles.dayToggleActive,
-                    ]}
-                    onPress={() => toggleDay(day.value)}
-                  >
-                    <Text
-                      style={[
-                        styles.dayToggleText,
-                        dayData.enabled && styles.dayToggleTextActive,
-                      ]}
-                    >
-                      {day.short}
-                    </Text>
-                  </TouchableOpacity>
+                {daysOfWeek.map((day) => {
+                  const dayData = dayAvailability[day.value];
+                  return (
+                    <View key={day.value} style={styles.dayRow}>
+                      <TouchableOpacity
+                        style={[
+                          styles.dayToggle,
+                          dayData.enabled && styles.dayToggleActive,
+                        ]}
+                        onPress={() => toggleDay(day.value)}
+                      >
+                        <Text
+                          style={[
+                            styles.dayToggleText,
+                            dayData.enabled && styles.dayToggleTextActive,
+                          ]}
+                        >
+                          {day.short}
+                        </Text>
+                      </TouchableOpacity>
 
-                  {dayData.enabled && (
-                    <View style={styles.timeInputs}>
-                      <View style={styles.timeInputContainer}>
-                        <Text style={styles.timeLabel}>From</Text>
-                        <TouchableOpacity
-                          style={styles.timeButton}
-                          onPress={() => openTimePicker(day.value, "startTime")}
-                        >
-                          <Text style={styles.timeButtonText}>
-                            {dayData.startTime || "09:00"}
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                      <View style={styles.timeInputContainer}>
-                        <Text style={styles.timeLabel}>To</Text>
-                        <TouchableOpacity
-                          style={styles.timeButton}
-                          onPress={() => openTimePicker(day.value, "endTime")}
-                        >
-                          <Text style={styles.timeButtonText}>
-                            {dayData.endTime || "18:00"}
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
+                      {dayData.enabled && (
+                        <View style={styles.timeInputs}>
+                          <View style={styles.timeInputContainer}>
+                            <Text style={styles.timeLabel}>From</Text>
+                            <TouchableOpacity
+                              style={styles.timeButton}
+                              onPress={() =>
+                                openTimePicker(day.value, "startTime")
+                              }
+                            >
+                              <Text style={styles.timeButtonText}>
+                                {dayData.startTime || "09:00"}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                          <View style={styles.timeInputContainer}>
+                            <Text style={styles.timeLabel}>To</Text>
+                            <TouchableOpacity
+                              style={styles.timeButton}
+                              onPress={() =>
+                                openTimePicker(day.value, "endTime")
+                              }
+                            >
+                              <Text style={styles.timeButtonText}>
+                                {dayData.endTime || "18:00"}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      )}
                     </View>
-                  )}
-                </View>
-              );
-            })}
+                  );
+                })}
+              </>
+            ) : (
+              <>
+                <Text style={styles.instruction}>
+                  Select specific dates and set times for each date
+                </Text>
+
+                <TouchableOpacity
+                  style={styles.calendarButton}
+                  onPress={() => setCalendarVisible(true)}
+                >
+                  <Text style={styles.calendarButtonText}>
+                    Select Dates ({Object.keys(selectedDates).length} selected)
+                  </Text>
+                </TouchableOpacity>
+
+                {Object.keys(selectedDates).length > 0 && (
+                  <View style={styles.selectedDatesContainer}>
+                    {Object.keys(selectedDates)
+                      .sort()
+                      .map((date) => {
+                        const dateData = selectedDates[date];
+                        return (
+                          <View key={date} style={styles.dateItem}>
+                            <View style={styles.dateItemHeader}>
+                              <Text style={styles.dateItemDate}>{date}</Text>
+                              <TouchableOpacity
+                                style={styles.removeDateButton}
+                                onPress={() => {
+                                  const newDates = { ...selectedDates };
+                                  delete newDates[date];
+                                  setSelectedDates(newDates);
+                                }}
+                              >
+                                <Text style={styles.removeDateButtonText}>
+                                  ×
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                            <View style={styles.dateTimeInputs}>
+                              <View style={styles.timeInputContainer}>
+                                <Text style={styles.timeLabel}>From</Text>
+                                <TouchableOpacity
+                                  style={styles.timeButton}
+                                  onPress={() => {
+                                    setEditingDate(date);
+                                    const [hour, minute] = dateData.startTime
+                                      .split(":")
+                                      .map(Number);
+                                    setTempTime({
+                                      hour: hour || 9,
+                                      minute: minute || 0,
+                                    });
+                                    setEditingField("startTime");
+                                    setTimePickerVisible(true);
+                                  }}
+                                >
+                                  <Text style={styles.timeButtonText}>
+                                    {dateData.startTime || "09:00"}
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                              <View style={styles.timeInputContainer}>
+                                <Text style={styles.timeLabel}>To</Text>
+                                <TouchableOpacity
+                                  style={styles.timeButton}
+                                  onPress={() => {
+                                    setEditingDate(date);
+                                    const [hour, minute] = dateData.endTime
+                                      .split(":")
+                                      .map(Number);
+                                    setTempTime({
+                                      hour: hour || 18,
+                                      minute: minute || 0,
+                                    });
+                                    setEditingField("endTime");
+                                    setTimePickerVisible(true);
+                                  }}
+                                >
+                                  <Text style={styles.timeButtonText}>
+                                    {dateData.endTime || "18:00"}
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+                          </View>
+                        );
+                      })}
+                  </View>
+                )}
+              </>
+            )}
           </View>
 
           <TouchableOpacity
@@ -752,7 +1014,10 @@ const AddSpaceScreen = () => {
             <View style={styles.modalButtons}>
               <TouchableOpacity
                 style={[styles.modalButton, styles.modalButtonCancel]}
-                onPress={() => setTimePickerVisible(false)}
+                onPress={() => {
+                  setTimePickerVisible(false);
+                  setEditingDate(null);
+                }}
               >
                 <Text style={styles.modalButtonTextCancel}>Cancel</Text>
               </TouchableOpacity>
@@ -761,6 +1026,77 @@ const AddSpaceScreen = () => {
                 onPress={confirmTimeSelection}
               >
                 <Text style={styles.modalButtonTextConfirm}>Confirm</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Calendar Modal */}
+      <Modal
+        visible={calendarVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setCalendarVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Select Dates</Text>
+            <Text style={styles.calendarInstruction}>
+              Tap dates to select/deselect. Selected dates:{" "}
+              {Object.keys(selectedDates).length}
+            </Text>
+
+            <ScrollView style={styles.calendarScroll}>
+              <View style={styles.calendarGrid}>
+                <View style={styles.calendarHeader}>
+                  {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
+                    (day) => (
+                      <Text key={day} style={styles.calendarHeaderDay}>
+                        {day}
+                      </Text>
+                    )
+                  )}
+                </View>
+                {generateCalendarDays().map((date, index) => {
+                  const isSelected = isDateSelected(date);
+                  const isToday =
+                    formatDateString(date) === formatDateString(new Date());
+                  const dayOfWeek = date.getDay();
+                  const isFirstOfWeek = dayOfWeek === 0;
+
+                  return (
+                    <TouchableOpacity
+                      key={index}
+                      style={[
+                        styles.calendarDay,
+                        isFirstOfWeek && styles.calendarDayFirst,
+                        isSelected && styles.calendarDaySelected,
+                        isToday && styles.calendarDayToday,
+                      ]}
+                      onPress={() => toggleDateSelection(date)}
+                    >
+                      <Text
+                        style={[
+                          styles.calendarDayText,
+                          isSelected && styles.calendarDayTextSelected,
+                          isToday && !isSelected && styles.calendarDayTextToday,
+                        ]}
+                      >
+                        {date.getDate()}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonCancel]}
+                onPress={() => setCalendarVisible(false)}
+              >
+                <Text style={styles.modalButtonTextCancel}>Done</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1019,6 +1355,117 @@ const styles = StyleSheet.create({
   modalButtonTextConfirm: {
     color: "#fff",
     fontSize: 16,
+    fontWeight: "600",
+  },
+  calendarButton: {
+    backgroundColor: "#007AFF",
+    borderRadius: 8,
+    padding: 15,
+    alignItems: "center",
+    marginTop: 10,
+    marginBottom: 15,
+  },
+  calendarButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  selectedDatesContainer: {
+    marginTop: 10,
+  },
+  dateItem: {
+    backgroundColor: "#f9f9f9",
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#ddd",
+  },
+  dateItemHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  dateItemDate: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
+  },
+  removeDateButton: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "#FF3B30",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  removeDateButtonText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "bold",
+    lineHeight: 20,
+  },
+  dateTimeInputs: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  calendarInstruction: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 15,
+    textAlign: "center",
+  },
+  calendarScroll: {
+    maxHeight: 400,
+  },
+  calendarGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+  },
+  calendarHeader: {
+    flexDirection: "row",
+    width: "100%",
+    marginBottom: 5,
+  },
+  calendarHeaderDay: {
+    flex: 1,
+    textAlign: "center",
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#666",
+    paddingVertical: 5,
+  },
+  calendarDay: {
+    width: "14.28%",
+    aspectRatio: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+  },
+  calendarDayFirst: {
+    borderLeftWidth: 2,
+    borderLeftColor: "#007AFF",
+  },
+  calendarDaySelected: {
+    backgroundColor: "#007AFF",
+    borderColor: "#007AFF",
+  },
+  calendarDayToday: {
+    borderWidth: 2,
+    borderColor: "#34C759",
+  },
+  calendarDayText: {
+    fontSize: 14,
+    color: "#333",
+  },
+  calendarDayTextSelected: {
+    color: "#fff",
+    fontWeight: "600",
+  },
+  calendarDayTextToday: {
+    color: "#34C759",
     fontWeight: "600",
   },
 });

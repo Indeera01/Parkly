@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS public.parking_spaces (
     availability_start TIME,
     availability_end TIME,
     available_days INTEGER[], -- Array of day numbers (0-6, Sunday-Saturday)
+    repeating_weekly BOOLEAN DEFAULT true, -- Whether availability repeats weekly
+    day_availability_schedule JSONB, -- Schedule: for repeating uses day numbers (0-6) as keys, for non-repeating uses date strings (YYYY-MM-DD) as keys
     is_active BOOLEAN DEFAULT true,
     images TEXT[], -- Array of image URLs
     created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,

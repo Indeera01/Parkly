@@ -22,7 +22,9 @@ export interface ParkingSpace {
   repeating_weekly?: boolean; // Whether availability repeats weekly
   day_availability_schedule?: {
     // Per-day availability schedule (JSONB)
-    [key: number]: { startTime: string; endTime: string };
+    // For repeating: key is day of week (0-6)
+    // For non-repeating: key is date string (YYYY-MM-DD)
+    [key: string]: { startTime: string; endTime: string };
   };
   max_vehicles?: number; // Maximum number of vehicles that can be parked
   is_active: boolean;

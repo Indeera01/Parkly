@@ -92,19 +92,42 @@ const SpaceDetailScreen = () => {
     }
   };
 
+  // Format date as YYYY-MM-DD string
+  const formatDateString = (date: Date): string => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
   // Check if a date is available
   const isDateAvailable = (date: Date): boolean => {
     if (!space) return false;
 
+    const dateStr = formatDateString(date);
     const dayOfWeek = date.getDay();
 
-    // If available_days is specified, check if this day is in the list
-    if (space.available_days && space.available_days.length > 0) {
-      return space.available_days.includes(dayOfWeek);
-    }
+    // Check if space is repeating weekly
+    const isRepeating = space.repeating_weekly !== false;
 
-    // If no specific days are set, assume all days are available
-    return true;
+    if (isRepeating) {
+      // For repeating schedules, check day_availability_schedule by day of week
+      if (space.day_availability_schedule) {
+        // Check if day of week exists in schedule
+        return !!space.day_availability_schedule[dayOfWeek];
+      }
+      // Fallback to available_days
+      if (space.available_days && space.available_days.length > 0) {
+        return space.available_days.includes(dayOfWeek);
+      }
+      return false;
+    } else {
+      // For non-repeating schedules, check if specific date exists in day_availability_schedule
+      if (space.day_availability_schedule) {
+        return !!space.day_availability_schedule[dateStr];
+      }
+      return false;
+    }
   };
 
   // Get the next available date starting from a given date
@@ -114,8 +137,11 @@ const SpaceDetailScreen = () => {
     const currentDate = new Date(startDate);
     currentDate.setHours(0, 0, 0, 0);
 
-    // Check up to 30 days ahead
-    for (let i = 0; i < 30; i++) {
+    const isRepeating = space.repeating_weekly !== false;
+    const maxDays = isRepeating ? 30 : 365; // Check further ahead for non-repeating
+
+    // Check up to maxDays ahead
+    for (let i = 0; i < maxDays; i++) {
       if (isDateAvailable(currentDate)) {
         return new Date(currentDate);
       }
@@ -137,7 +163,10 @@ const SpaceDetailScreen = () => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    for (let i = 0; i < 30; i++) {
+    const isRepeating = space.repeating_weekly !== false;
+    const maxDays = isRepeating ? 30 : 365; // Check further back for non-repeating
+
+    for (let i = 0; i < maxDays; i++) {
       if (currentDate < today) {
         return null;
       }
@@ -153,29 +182,51 @@ const SpaceDetailScreen = () => {
   // Get available time range for a specific date
   const getAvailableTimeRangeForDate = (
     date: Date
-  ): { start: { hour: number; minute: number }; end: { hour: number; minute: number } } | null => {
+  ): {
+    start: { hour: number; minute: number };
+    end: { hour: number; minute: number };
+  } | null => {
     if (!space) return null;
 
+    const dateStr = formatDateString(date);
     const dayOfWeek = date.getDay();
+    const isRepeating = space.repeating_weekly !== false;
 
-    // Check if there's a specific schedule for this day
-    if (space.day_availability_schedule && space.day_availability_schedule[dayOfWeek]) {
-      const schedule = space.day_availability_schedule[dayOfWeek];
-      return {
-        start: parseTime(schedule.startTime),
-        end: parseTime(schedule.endTime),
-      };
+    if (isRepeating) {
+      // For repeating schedules, check day_availability_schedule by day of week
+      if (
+        space.day_availability_schedule &&
+        space.day_availability_schedule[dayOfWeek]
+      ) {
+        const schedule = space.day_availability_schedule[dayOfWeek];
+        return {
+          start: parseTime(schedule.startTime),
+          end: parseTime(schedule.endTime),
+        };
+      }
+
+      // Fallback to default availability times
+      if (space.availability_start && space.availability_end) {
+        return {
+          start: parseTime(space.availability_start),
+          end: parseTime(space.availability_end),
+        };
+      }
+    } else {
+      // For non-repeating schedules, check specific date in day_availability_schedule
+      if (
+        space.day_availability_schedule &&
+        space.day_availability_schedule[dateStr]
+      ) {
+        const schedule = space.day_availability_schedule[dateStr];
+        return {
+          start: parseTime(schedule.startTime),
+          end: parseTime(schedule.endTime),
+        };
+      }
     }
 
-    // Use default availability times
-    if (space.availability_start && space.availability_end) {
-      return {
-        start: parseTime(space.availability_start),
-        end: parseTime(space.availability_end),
-      };
-    }
-
-    // Default to 24 hours if no specific times
+    // Default to 24 hours if no specific times found
     return {
       start: { hour: 0, minute: 0 },
       end: { hour: 23, minute: 59 },
@@ -277,7 +328,10 @@ const SpaceDetailScreen = () => {
         if (endTotalMinutes <= newStartTotalMinutes) {
           // Set end time to 1 hour after start time
           const newEndHour = tempTime.hour + 1;
-          setEndTime({ hour: Math.min(newEndHour, 23), minute: tempTime.minute });
+          setEndTime({
+            hour: Math.min(newEndHour, 23),
+            minute: tempTime.minute,
+          });
         }
       } else {
         setEndTime({ ...tempTime });
@@ -294,10 +348,7 @@ const SpaceDetailScreen = () => {
   };
 
   const formatDate = (date: Date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
+    return formatDateString(date);
   };
 
   const checkAvailability = async () => {
@@ -401,10 +452,14 @@ const SpaceDetailScreen = () => {
     // Validate against available time range
     const timeRange = getAvailableTimeRangeForDate(bookingDate);
     if (timeRange) {
-      const availStartMinutes = timeRange.start.hour * 60 + timeRange.start.minute;
+      const availStartMinutes =
+        timeRange.start.hour * 60 + timeRange.start.minute;
       const availEndMinutes = timeRange.end.hour * 60 + timeRange.end.minute;
 
-      if (startTotalMinutes < availStartMinutes || endTotalMinutes > availEndMinutes) {
+      if (
+        startTotalMinutes < availStartMinutes ||
+        endTotalMinutes > availEndMinutes
+      ) {
         Alert.alert(
           "Error",
           `Booking time must be within available hours: ${formatTime(
@@ -562,47 +617,101 @@ const SpaceDetailScreen = () => {
 
         <View style={styles.availabilityContainer}>
           <Text style={styles.sectionTitle}>Availability</Text>
-          {space.available_days && space.available_days.length > 0 ? (
+          {space.repeating_weekly !== false ? (
             <>
-              {space.repeating_weekly !== false && (
-                <Text style={styles.repeatingText}>Repeats Weekly</Text>
-              )}
-              <View style={styles.daysContainer}>
-                {space.available_days.map((dayNum) => {
-                  const daysOfWeek = [
-                    "Sunday",
-                    "Monday",
-                    "Tuesday",
-                    "Wednesday",
-                    "Thursday",
-                    "Friday",
-                    "Saturday",
-                  ];
-                  const dayName = daysOfWeek[dayNum];
-                  // Check if we have per-day schedule, otherwise use main availability
-                  const daySchedule = space.day_availability_schedule?.[dayNum];
-                  const startTime =
-                    daySchedule?.startTime || space.availability_start || "N/A";
-                  const endTime =
-                    daySchedule?.endTime || space.availability_end || "N/A";
+              <Text style={styles.repeatingText}>Repeats Weekly</Text>
+              {space.day_availability_schedule ? (
+                <View style={styles.daysContainer}>
+                  {Object.keys(space.day_availability_schedule)
+                    .map(Number)
+                    .filter(
+                      (dayNum) => !isNaN(dayNum) && dayNum >= 0 && dayNum <= 6
+                    )
+                    .sort((a, b) => a - b)
+                    .map((dayNum) => {
+                      const daysOfWeek = [
+                        "Sunday",
+                        "Monday",
+                        "Tuesday",
+                        "Wednesday",
+                        "Thursday",
+                        "Friday",
+                        "Saturday",
+                      ];
+                      const dayName = daysOfWeek[dayNum];
+                      const daySchedule =
+                        space.day_availability_schedule?.[dayNum];
+                      const startTime = daySchedule?.startTime || "N/A";
+                      const endTime = daySchedule?.endTime || "N/A";
 
-                  return (
-                    <View key={dayNum} style={styles.dayItem}>
-                      <Text style={styles.dayName}>{dayName}</Text>
-                      <Text style={styles.dayTime}>
-                        {startTime} - {endTime}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
+                      return (
+                        <View key={dayNum} style={styles.dayItem}>
+                          <Text style={styles.dayName}>{dayName}</Text>
+                          <Text style={styles.dayTime}>
+                            {startTime} - {endTime}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                </View>
+              ) : space.available_days && space.available_days.length > 0 ? (
+                <View style={styles.daysContainer}>
+                  {space.available_days.map((dayNum) => {
+                    const daysOfWeek = [
+                      "Sunday",
+                      "Monday",
+                      "Tuesday",
+                      "Wednesday",
+                      "Thursday",
+                      "Friday",
+                      "Saturday",
+                    ];
+                    const dayName = daysOfWeek[dayNum];
+                    const startTime = space.availability_start || "N/A";
+                    const endTime = space.availability_end || "N/A";
+
+                    return (
+                      <View key={dayNum} style={styles.dayItem}>
+                        <Text style={styles.dayName}>{dayName}</Text>
+                        <Text style={styles.dayTime}>
+                          {startTime} - {endTime}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : (
+                <Text style={styles.availabilityText}>Not specified</Text>
+              )}
             </>
-          ) : space.availability_start && space.availability_end ? (
-            <Text style={styles.availabilityText}>
-              {space.availability_start} - {space.availability_end}
-            </Text>
           ) : (
-            <Text style={styles.availabilityText}>Not specified</Text>
+            <>
+              <Text style={styles.repeatingText}>Specific Dates</Text>
+              {space.day_availability_schedule ? (
+                <View style={styles.daysContainer}>
+                  {Object.keys(space.day_availability_schedule)
+                    .filter((dateKey) => dateKey.match(/^\d{4}-\d{2}-\d{2}$/))
+                    .sort()
+                    .map((dateKey) => {
+                      const dateSchedule =
+                        space.day_availability_schedule?.[dateKey];
+                      const startTime = dateSchedule?.startTime || "N/A";
+                      const endTime = dateSchedule?.endTime || "N/A";
+
+                      return (
+                        <View key={dateKey} style={styles.dayItem}>
+                          <Text style={styles.dayName}>{dateKey}</Text>
+                          <Text style={styles.dayTime}>
+                            {startTime} - {endTime}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                </View>
+              ) : (
+                <Text style={styles.availabilityText}>No dates specified</Text>
+              )}
+            </>
           )}
         </View>
 
@@ -857,8 +966,7 @@ const SpaceDetailScreen = () => {
                       key={minute}
                       style={[
                         styles.pickerItem,
-                        tempTime.minute === minute &&
-                          styles.pickerItemSelected,
+                        tempTime.minute === minute && styles.pickerItemSelected,
                       ]}
                       onPress={() => setTempTime({ ...tempTime, minute })}
                     >
