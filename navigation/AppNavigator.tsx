@@ -3,6 +3,7 @@ import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { useAuth } from "../contexts/AuthContext";
+import {Ionicons} from "@expo/vector-icons";
 
 // Screens
 import LoginScreen from "../screens/LoginScreen";
@@ -44,6 +45,9 @@ const MainTabs = () => {
         options={{
           title: "Find Parking",
           tabBarLabel: "Map",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="map-outline" color={color} size={size} />
+          ),
         }}
       />
       <Tab.Screen
@@ -52,6 +56,9 @@ const MainTabs = () => {
         options={{
           title: "My Bookings",
           tabBarLabel: "Bookings",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="book-outline" color={color} size={size} />
+          ),
         }}
       />
       <Tab.Screen
@@ -60,6 +67,9 @@ const MainTabs = () => {
         options={{
           title: "My Listings",
           tabBarLabel: "Listings",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="car-outline" color={color} size={size} />
+          ),
         }}
       />
     </Tab.Navigator>
