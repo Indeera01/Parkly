@@ -59,6 +59,21 @@ const SpaceDetailScreen = () => {
     }
   }, [bookingDate, startTime, endTime, space]);
 
+  // Initialize date and time based on availability when space loads
+  useEffect(() => {
+    if (space) {
+      const nextAvailableDate = getNextAvailableDate(new Date());
+      if (nextAvailableDate) {
+        setBookingDate(nextAvailableDate);
+        const timeRange = getAvailableTimeRangeForDate(nextAvailableDate);
+        if (timeRange) {
+          setStartTime(timeRange.start);
+          setEndTime(timeRange.end);
+        }
+      }
+    }
+  }, [space]);
+
   const fetchSpaceDetails = async () => {
     try {
       const { data, error } = await supabase
@@ -77,12 +92,172 @@ const SpaceDetailScreen = () => {
     }
   };
 
+  // Check if a date is available
+  const isDateAvailable = (date: Date): boolean => {
+    if (!space) return false;
+
+    const dayOfWeek = date.getDay();
+
+    // If available_days is specified, check if this day is in the list
+    if (space.available_days && space.available_days.length > 0) {
+      return space.available_days.includes(dayOfWeek);
+    }
+
+    // If no specific days are set, assume all days are available
+    return true;
+  };
+
+  // Get the next available date starting from a given date
+  const getNextAvailableDate = (startDate: Date): Date | null => {
+    if (!space) return null;
+
+    const currentDate = new Date(startDate);
+    currentDate.setHours(0, 0, 0, 0);
+
+    // Check up to 30 days ahead
+    for (let i = 0; i < 30; i++) {
+      if (isDateAvailable(currentDate)) {
+        return new Date(currentDate);
+      }
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    return null;
+  };
+
+  // Get the previous available date before a given date
+  const getPreviousAvailableDate = (startDate: Date): Date | null => {
+    if (!space) return null;
+
+    const currentDate = new Date(startDate);
+    currentDate.setHours(0, 0, 0, 0);
+    currentDate.setDate(currentDate.getDate() - 1);
+
+    // Check up to 30 days back, but not before today
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    for (let i = 0; i < 30; i++) {
+      if (currentDate < today) {
+        return null;
+      }
+      if (isDateAvailable(currentDate)) {
+        return new Date(currentDate);
+      }
+      currentDate.setDate(currentDate.getDate() - 1);
+    }
+
+    return null;
+  };
+
+  // Get available time range for a specific date
+  const getAvailableTimeRangeForDate = (
+    date: Date
+  ): { start: { hour: number; minute: number }; end: { hour: number; minute: number } } | null => {
+    if (!space) return null;
+
+    const dayOfWeek = date.getDay();
+
+    // Check if there's a specific schedule for this day
+    if (space.day_availability_schedule && space.day_availability_schedule[dayOfWeek]) {
+      const schedule = space.day_availability_schedule[dayOfWeek];
+      return {
+        start: parseTime(schedule.startTime),
+        end: parseTime(schedule.endTime),
+      };
+    }
+
+    // Use default availability times
+    if (space.availability_start && space.availability_end) {
+      return {
+        start: parseTime(space.availability_start),
+        end: parseTime(space.availability_end),
+      };
+    }
+
+    // Default to 24 hours if no specific times
+    return {
+      start: { hour: 0, minute: 0 },
+      end: { hour: 23, minute: 59 },
+    };
+  };
+
+  // Parse time string (HH:MM) to hour and minute object
+  const parseTime = (timeStr: string): { hour: number; minute: number } => {
+    const [hourStr, minuteStr] = timeStr.split(":");
+    return {
+      hour: parseInt(hourStr, 10) || 0,
+      minute: parseInt(minuteStr, 10) || 0,
+    };
+  };
+
+  // Get available hours for the selected date and field (start or end)
+  const getAvailableHours = (field: "startTime" | "endTime"): number[] => {
+    const timeRange = getAvailableTimeRangeForDate(bookingDate);
+    if (!timeRange) return Array.from({ length: 24 }, (_, i) => i);
+
+    const { start, end } = timeRange;
+    const hours: number[] = [];
+
+    if (field === "startTime") {
+      // Start time can be from availability start to before end
+      for (let h = start.hour; h <= end.hour; h++) {
+        hours.push(h);
+      }
+    } else {
+      // End time should be after start time
+      const startHour = startTime.hour;
+      for (let h = Math.max(startHour, start.hour); h <= end.hour; h++) {
+        if (h > startHour || (h === startHour && start.minute < 60)) {
+          hours.push(h);
+        }
+      }
+    }
+
+    return hours;
+  };
+
+  // Get available minutes for selected hour
+  const getAvailableMinutes = (
+    hour: number,
+    field: "startTime" | "endTime"
+  ): number[] => {
+    const timeRange = getAvailableTimeRangeForDate(bookingDate);
+    if (!timeRange) return Array.from({ length: 12 }, (_, i) => i * 5);
+
+    const { start, end } = timeRange;
+    const minutes: number[] = [];
+
+    for (let m = 0; m < 60; m += 5) {
+      if (field === "startTime") {
+        // For start time, check against availability start
+        if (hour > start.hour || (hour === start.hour && m >= start.minute)) {
+          if (hour < end.hour || (hour === end.hour && m < end.minute)) {
+            minutes.push(m);
+          }
+        }
+      } else {
+        // For end time, check against start time
+        if (
+          hour > startTime.hour ||
+          (hour === startTime.hour && m > startTime.minute)
+        ) {
+          if (hour < end.hour || (hour === end.hour && m <= end.minute)) {
+            minutes.push(m);
+          }
+        }
+      }
+    }
+
+    return minutes;
+  };
+
   const generateHours = () => {
-    return Array.from({ length: 24 }, (_, i) => i);
+    return getAvailableHours(editingField || "startTime");
   };
 
   const generateMinutes = () => {
-    return Array.from({ length: 60 }, (_, i) => i);
+    return getAvailableMinutes(tempTime.hour, editingField || "startTime");
   };
 
   const openTimePicker = (field: "startTime" | "endTime") => {
@@ -96,6 +271,14 @@ const SpaceDetailScreen = () => {
     if (editingField) {
       if (editingField === "startTime") {
         setStartTime({ ...tempTime });
+        // Adjust end time if it's now invalid
+        const endTotalMinutes = endTime.hour * 60 + endTime.minute;
+        const newStartTotalMinutes = tempTime.hour * 60 + tempTime.minute;
+        if (endTotalMinutes <= newStartTotalMinutes) {
+          // Set end time to 1 hour after start time
+          const newEndHour = tempTime.hour + 1;
+          setEndTime({ hour: Math.min(newEndHour, 23), minute: tempTime.minute });
+        }
       } else {
         setEndTime({ ...tempTime });
       }
@@ -165,8 +348,46 @@ const SpaceDetailScreen = () => {
     }
   };
 
+  const handleDateChange = (direction: "prev" | "next") => {
+    if (direction === "next") {
+      const nextDate = getNextAvailableDate(
+        new Date(bookingDate.getTime() + 24 * 60 * 60 * 1000)
+      );
+      if (nextDate) {
+        setBookingDate(nextDate);
+        // Update times to match new date's availability
+        const timeRange = getAvailableTimeRangeForDate(nextDate);
+        if (timeRange) {
+          setStartTime(timeRange.start);
+          setEndTime(timeRange.end);
+        }
+      } else {
+        Alert.alert("Notice", "No available dates found in the next 30 days");
+      }
+    } else {
+      const prevDate = getPreviousAvailableDate(bookingDate);
+      if (prevDate) {
+        setBookingDate(prevDate);
+        // Update times to match new date's availability
+        const timeRange = getAvailableTimeRangeForDate(prevDate);
+        if (timeRange) {
+          setStartTime(timeRange.start);
+          setEndTime(timeRange.end);
+        }
+      } else {
+        Alert.alert("Notice", "No available dates found before this date");
+      }
+    }
+  };
+
   const handleBooking = async () => {
     if (!user || !space) return;
+
+    // Check if date is available
+    if (!isDateAvailable(bookingDate)) {
+      Alert.alert("Error", "This date is not available for booking");
+      return;
+    }
 
     // Validate times
     const startTotalMinutes = startTime.hour * 60 + startTime.minute;
@@ -175,6 +396,23 @@ const SpaceDetailScreen = () => {
     if (endTotalMinutes <= startTotalMinutes) {
       Alert.alert("Error", "End time must be after start time");
       return;
+    }
+
+    // Validate against available time range
+    const timeRange = getAvailableTimeRangeForDate(bookingDate);
+    if (timeRange) {
+      const availStartMinutes = timeRange.start.hour * 60 + timeRange.start.minute;
+      const availEndMinutes = timeRange.end.hour * 60 + timeRange.end.minute;
+
+      if (startTotalMinutes < availStartMinutes || endTotalMinutes > availEndMinutes) {
+        Alert.alert(
+          "Error",
+          `Booking time must be within available hours: ${formatTime(
+            timeRange.start
+          )} - ${formatTime(timeRange.end)}`
+        );
+        return;
+      }
     }
 
     // Validate vehicle count
@@ -374,14 +612,15 @@ const SpaceDetailScreen = () => {
           {/* Date Selection */}
           <View style={styles.dateSection}>
             <Text style={styles.dateLabel}>Booking Date</Text>
+            {!isDateAvailable(bookingDate) && (
+              <Text style={styles.warningText}>
+                This day is not available. Use arrows to find available dates.
+              </Text>
+            )}
             <View style={styles.dateSelector}>
               <TouchableOpacity
                 style={styles.dateButton}
-                onPress={() => {
-                  const newDate = new Date(bookingDate);
-                  newDate.setDate(newDate.getDate() - 1);
-                  setBookingDate(newDate);
-                }}
+                onPress={() => handleDateChange("prev")}
               >
                 <Text style={styles.dateButtonText}>←</Text>
               </TouchableOpacity>
@@ -393,11 +632,7 @@ const SpaceDetailScreen = () => {
               </View>
               <TouchableOpacity
                 style={styles.dateButton}
-                onPress={() => {
-                  const newDate = new Date(bookingDate);
-                  newDate.setDate(newDate.getDate() + 1);
-                  setBookingDate(newDate);
-                }}
+                onPress={() => handleDateChange("next")}
               >
                 <Text style={styles.dateButtonText}>→</Text>
               </TouchableOpacity>
@@ -585,7 +820,20 @@ const SpaceDetailScreen = () => {
                         styles.pickerItem,
                         tempTime.hour === hour && styles.pickerItemSelected,
                       ]}
-                      onPress={() => setTempTime({ ...tempTime, hour })}
+                      onPress={() => {
+                        setTempTime({ ...tempTime, hour });
+                        // Reset minute if current minute is not available for new hour
+                        const availableMinutes = getAvailableMinutes(
+                          hour,
+                          editingField || "startTime"
+                        );
+                        if (!availableMinutes.includes(tempTime.minute)) {
+                          setTempTime({
+                            hour,
+                            minute: availableMinutes[0] || 0,
+                          });
+                        }
+                      }}
                     >
                       <Text
                         style={[
@@ -604,29 +852,27 @@ const SpaceDetailScreen = () => {
               <View style={styles.pickerColumn}>
                 <Text style={styles.pickerLabel}>Minute</Text>
                 <ScrollView style={styles.pickerScroll}>
-                  {generateMinutes()
-                    .filter((min) => min % 5 === 0)
-                    .map((minute) => (
-                      <TouchableOpacity
-                        key={minute}
+                  {generateMinutes().map((minute) => (
+                    <TouchableOpacity
+                      key={minute}
+                      style={[
+                        styles.pickerItem,
+                        tempTime.minute === minute &&
+                          styles.pickerItemSelected,
+                      ]}
+                      onPress={() => setTempTime({ ...tempTime, minute })}
+                    >
+                      <Text
                         style={[
-                          styles.pickerItem,
+                          styles.pickerItemText,
                           tempTime.minute === minute &&
-                            styles.pickerItemSelected,
+                            styles.pickerItemTextSelected,
                         ]}
-                        onPress={() => setTempTime({ ...tempTime, minute })}
                       >
-                        <Text
-                          style={[
-                            styles.pickerItemText,
-                            tempTime.minute === minute &&
-                              styles.pickerItemTextSelected,
-                          ]}
-                        >
-                          {String(minute).padStart(2, "0")}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
+                        {String(minute).padStart(2, "0")}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
                 </ScrollView>
               </View>
             </View>
@@ -757,6 +1003,12 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginBottom: 8,
     color: "#333",
+  },
+  warningText: {
+    fontSize: 12,
+    color: "#FF3B30",
+    marginBottom: 8,
+    fontStyle: "italic",
   },
   dateSelector: {
     flexDirection: "row",
