@@ -97,6 +97,10 @@ CREATE POLICY "Users can update their own bookings"
     ON public.bookings FOR UPDATE
     USING (auth.uid() = user_id);
 
+CREATE POLICY "Users can delete their own bookings"
+    ON public.bookings FOR DELETE
+    USING (auth.uid() = user_id);
+
 -- Create indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_parking_spaces_host_id ON public.parking_spaces(host_id);
 CREATE INDEX IF NOT EXISTS idx_parking_spaces_location ON public.parking_spaces(latitude, longitude);

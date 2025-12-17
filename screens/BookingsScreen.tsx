@@ -79,6 +79,42 @@ const BookingsScreen = () => {
     );
   };
 
+  const handleDelete = async (bookingId: string) => {
+    Alert.alert(
+      "Delete Booking",
+      "Are you sure you want to delete this booking? This action cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const { error } = await supabase
+                .from("bookings")
+                .delete()
+                .eq("id", bookingId);
+
+              if (error) {
+                console.error("Delete error:", error);
+                throw error;
+              }
+              fetchBookings();
+              Alert.alert("Success", "Booking deleted");
+            } catch (error: any) {
+              console.error("Delete booking error:", error);
+              Alert.alert(
+                "Error",
+                error.message ||
+                  "Failed to delete booking. Please check your permissions."
+              );
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleString();
@@ -171,24 +207,37 @@ const BookingsScreen = () => {
           )}
         </View>
 
-        {item.status === "confirmed" && (
-          <TouchableOpacity
-            style={styles.cancelButton}
-            onPress={() => handleCancel(item.id)}
-          >
-            <Text style={styles.cancelButtonText}>Cancel Booking</Text>
-          </TouchableOpacity>
-        )}
+        <View style={styles.actionButtonsContainer}>
+          {item.status === "confirmed" && (
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={() => handleCancel(item.id)}
+            >
+              <Text style={styles.cancelButtonText}>Cancel Booking</Text>
+            </TouchableOpacity>
+          )}
 
-        {(item.status === "host_cancelled" ||
-          item.status === "space_deleted") && (
-          <View style={styles.infoBox}>
-            <Text style={styles.infoText}>
-              This booking was cancelled by the parking space host. If you have
-              any questions, please contact support.
-            </Text>
-          </View>
-        )}
+          {(item.status === "host_cancelled" ||
+            item.status === "space_deleted") && (
+            <View style={styles.infoBox}>
+              <Text style={styles.infoText}>
+                This booking was cancelled by the parking space host. If you
+                have any questions, please contact support.
+              </Text>
+            </View>
+          )}
+
+          {/* Show delete button for non-confirmed bookings or past bookings */}
+          {(item.status !== "confirmed" ||
+            new Date(item.end_time) < new Date()) && (
+            <TouchableOpacity
+              style={styles.deleteButton}
+              onPress={() => handleDelete(item.id)}
+            >
+              <Text style={styles.deleteButtonText}>Delete</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
     );
   };
@@ -291,14 +340,27 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontStyle: "italic",
   },
-  cancelButton: {
+  actionButtonsContainer: {
     marginTop: 12,
+    gap: 8,
+  },
+  cancelButton: {
     padding: 10,
     backgroundColor: "#FF3B30",
     borderRadius: 8,
     alignItems: "center",
   },
   cancelButtonText: {
+    color: "#fff",
+    fontWeight: "600",
+  },
+  deleteButton: {
+    padding: 10,
+    backgroundColor: "#8E8E93",
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  deleteButtonText: {
     color: "#fff",
     fontWeight: "600",
   },
