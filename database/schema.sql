@@ -37,11 +37,12 @@ CREATE TABLE IF NOT EXISTS public.parking_spaces (
 CREATE TABLE IF NOT EXISTS public.bookings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
-    space_id UUID NOT NULL REFERENCES public.parking_spaces(id) ON DELETE CASCADE,
+    space_id UUID REFERENCES public.parking_spaces(id) ON DELETE SET NULL,
     start_time TIMESTAMP WITH TIME ZONE NOT NULL,
     end_time TIMESTAMP WITH TIME ZONE NOT NULL,
     total_price DECIMAL(10, 2) NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed')),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed', 'host_cancelled', 'space_deleted')),
+    cancellation_reason TEXT, -- Reason for cancellation (e.g., "Space deactivated", "Space deleted")
     created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
@@ -122,6 +123,57 @@ CREATE TRIGGER update_parking_spaces_updated_at BEFORE UPDATE ON public.parking_
 
 CREATE TRIGGER update_bookings_updated_at BEFORE UPDATE ON public.bookings
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Function to cancel future bookings when a space is deactivated
+CREATE OR REPLACE FUNCTION cancel_bookings_on_space_deactivation()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- If space is being deactivated (is_active changed from true to false)
+    IF OLD.is_active = true AND NEW.is_active = false THEN
+        -- Cancel all future confirmed/pending bookings for this space
+        UPDATE public.bookings
+        SET 
+            status = 'host_cancelled',
+            cancellation_reason = 'Parking space was deactivated by the host',
+            updated_at = TIMEZONE('utc'::text, NOW())
+        WHERE space_id = NEW.id
+            AND status IN ('pending', 'confirmed')
+            AND start_time > TIMEZONE('utc'::text, NOW());
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to cancel bookings when space is deactivated
+CREATE TRIGGER on_space_deactivation
+    AFTER UPDATE OF is_active ON public.parking_spaces
+    FOR EACH ROW
+    WHEN (OLD.is_active IS DISTINCT FROM NEW.is_active)
+    EXECUTE FUNCTION cancel_bookings_on_space_deactivation();
+
+-- Function to mark bookings as cancelled before space deletion
+CREATE OR REPLACE FUNCTION cancel_bookings_before_space_deletion()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Mark all future bookings as cancelled before space is deleted
+    UPDATE public.bookings
+    SET 
+        status = 'space_deleted',
+        cancellation_reason = 'Parking space was deleted by the host',
+        updated_at = TIMEZONE('utc'::text, NOW())
+    WHERE space_id = OLD.id
+        AND status IN ('pending', 'confirmed')
+        AND start_time > TIMEZONE('utc'::text, NOW());
+    
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to cancel bookings before space deletion
+CREATE TRIGGER before_space_deletion
+    BEFORE DELETE ON public.parking_spaces
+    FOR EACH ROW
+    EXECUTE FUNCTION cancel_bookings_before_space_deletion();
 
 -- Function to automatically create user profile on signup
 CREATE OR REPLACE FUNCTION public.handle_new_user()

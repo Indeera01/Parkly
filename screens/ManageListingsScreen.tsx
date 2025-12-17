@@ -72,14 +72,66 @@ const ManageListingsScreen = () => {
   );
 
   const handleToggleActive = async (space: ParkingSpace) => {
+    // If deactivating, check for future bookings
+    if (space.is_active) {
+      try {
+        const { data: futureBookings, error: checkError } = await supabase
+          .from("bookings")
+          .select("id")
+          .eq("space_id", space.id)
+          .in("status", ["pending", "confirmed"])
+          .gt("start_time", new Date().toISOString());
+
+        if (checkError) throw checkError;
+
+        if (futureBookings && futureBookings.length > 0) {
+          Alert.alert(
+            "Deactivate Listing",
+            `This listing has ${futureBookings.length} future booking(s). Deactivating will cancel these bookings. Continue?`,
+            [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Deactivate",
+                style: "destructive",
+                onPress: async () => {
+                  await performDeactivation(space.id);
+                },
+              },
+            ]
+          );
+          return;
+        }
+      } catch (error: any) {
+        Alert.alert("Error", "Failed to check bookings");
+        console.error(error);
+        return;
+      }
+    }
+
+    await performDeactivation(space.id);
+  };
+
+  const performDeactivation = async (spaceId: string) => {
     try {
+      const space = listings.find((s) => s.id === spaceId);
+      if (!space) return;
+
       const { error } = await supabase
         .from("parking_spaces")
         .update({ is_active: !space.is_active })
-        .eq("id", space.id);
+        .eq("id", spaceId);
 
       if (error) throw error;
       fetchListings();
+
+      if (!space.is_active) {
+        Alert.alert("Success", "Listing activated");
+      } else {
+        Alert.alert(
+          "Listing Deactivated",
+          "Future bookings for this listing have been cancelled."
+        );
+      }
     } catch (error: any) {
       Alert.alert("Error", "Failed to update listing");
       console.error(error);
@@ -87,16 +139,45 @@ const ManageListingsScreen = () => {
   };
 
   const handleDelete = async (spaceId: string) => {
-    Alert.alert(
-      "Delete Listing",
-      "Are you sure you want to delete this listing?",
-      [
+    // Check for existing bookings (past and future)
+    try {
+      const { data: allBookings, error: checkError } = await supabase
+        .from("bookings")
+        .select("id, start_time, status")
+        .eq("space_id", spaceId);
+
+      if (checkError) throw checkError;
+
+      const futureBookings =
+        allBookings?.filter(
+          (b) =>
+            new Date(b.start_time) > new Date() &&
+            ["pending", "confirmed"].includes(b.status)
+        ) || [];
+
+      const pastBookings =
+        allBookings?.filter(
+          (b) =>
+            new Date(b.start_time) <= new Date() ||
+            !["pending", "confirmed"].includes(b.status)
+        ) || [];
+
+      let message = "Are you sure you want to delete this listing?";
+      if (futureBookings.length > 0) {
+        message += `\n\nThis will cancel ${futureBookings.length} future booking(s).`;
+      }
+      if (pastBookings.length > 0) {
+        message += `\n\nNote: ${pastBookings.length} past booking(s) will be preserved for records.`;
+      }
+
+      Alert.alert("Delete Listing", message, [
         { text: "Cancel", style: "cancel" },
         {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
             try {
+              // The database trigger will handle cancelling future bookings
               const { error } = await supabase
                 .from("parking_spaces")
                 .delete()
@@ -104,15 +185,26 @@ const ManageListingsScreen = () => {
 
               if (error) throw error;
               fetchListings();
-              Alert.alert("Success", "Listing deleted");
+
+              if (futureBookings.length > 0) {
+                Alert.alert(
+                  "Listing Deleted",
+                  `Listing deleted. ${futureBookings.length} future booking(s) have been cancelled and users have been notified.`
+                );
+              } else {
+                Alert.alert("Success", "Listing deleted");
+              }
             } catch (error: any) {
               Alert.alert("Error", "Failed to delete listing");
               console.error(error);
             }
           },
         },
-      ]
-    );
+      ]);
+    } catch (error: any) {
+      Alert.alert("Error", "Failed to check bookings before deletion");
+      console.error(error);
+    }
   };
 
   const renderListingItem = ({ item }: { item: ParkingSpace }) => {

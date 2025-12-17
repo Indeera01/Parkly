@@ -89,6 +89,8 @@ const BookingsScreen = () => {
       case "confirmed":
         return "#34C759";
       case "cancelled":
+      case "host_cancelled":
+      case "space_deleted":
         return "#FF3B30";
       case "completed":
         return "#8E8E93";
@@ -97,26 +99,47 @@ const BookingsScreen = () => {
     }
   };
 
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case "host_cancelled":
+        return "CANCELLED BY HOST";
+      case "space_deleted":
+        return "SPACE DELETED";
+      default:
+        return status.toUpperCase();
+    }
+  };
+
   const renderBookingItem = ({ item }: { item: Booking }) => {
     const space = item.space as any;
+    const isCancelledByHost =
+      item.status === "host_cancelled" || item.status === "space_deleted";
+    const spaceTitle = space?.title || "Space No Longer Available";
+    const spaceAddress = space?.address || "Address not available";
 
     return (
       <View style={styles.bookingCard}>
         <View style={styles.bookingHeader}>
-          <Text style={styles.spaceTitle}>
-            {space?.title || "Unknown Space"}
-          </Text>
+          <Text style={styles.spaceTitle}>{spaceTitle}</Text>
           <View
             style={[
               styles.statusBadge,
               { backgroundColor: getStatusColor(item.status) },
             ]}
           >
-            <Text style={styles.statusText}>{item.status.toUpperCase()}</Text>
+            <Text style={styles.statusText}>{getStatusText(item.status)}</Text>
           </View>
         </View>
 
-        <Text style={styles.address}>{space?.address || "N/A"}</Text>
+        {isCancelledByHost && item.cancellation_reason && (
+          <View style={styles.cancellationNotice}>
+            <Text style={styles.cancellationText}>
+              {item.cancellation_reason}
+            </Text>
+          </View>
+        )}
+
+        <Text style={styles.address}>{spaceAddress}</Text>
 
         <View style={styles.bookingDetails}>
           <Text style={styles.detailText}>
@@ -155,6 +178,16 @@ const BookingsScreen = () => {
           >
             <Text style={styles.cancelButtonText}>Cancel Booking</Text>
           </TouchableOpacity>
+        )}
+
+        {(item.status === "host_cancelled" ||
+          item.status === "space_deleted") && (
+          <View style={styles.infoBox}>
+            <Text style={styles.infoText}>
+              This booking was cancelled by the parking space host. If you have
+              any questions, please contact support.
+            </Text>
+          </View>
         )}
       </View>
     );
@@ -284,6 +317,32 @@ const styles = StyleSheet.create({
   emptySubtext: {
     fontSize: 14,
     color: "#999",
+  },
+  cancellationNotice: {
+    backgroundColor: "#FFF3CD",
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: "#FF9500",
+  },
+  cancellationText: {
+    fontSize: 14,
+    color: "#856404",
+    fontWeight: "500",
+  },
+  infoBox: {
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: "#f0f0f0",
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: "#FF3B30",
+  },
+  infoText: {
+    fontSize: 13,
+    color: "#666",
+    lineHeight: 18,
   },
 });
 

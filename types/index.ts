@@ -36,15 +36,22 @@ export interface ParkingSpace {
 export interface Booking {
   id: string;
   user_id: string;
-  space_id: string;
+  space_id: string | null; // Nullable in case space is deleted
   start_time: string;
   end_time: string;
   vehicle_count: number; // Number of vehicles in this booking
   total_price: number;
-  status: "pending" | "confirmed" | "cancelled" | "completed";
+  status:
+    | "pending"
+    | "confirmed"
+    | "cancelled"
+    | "completed"
+    | "host_cancelled"
+    | "space_deleted";
+  cancellation_reason?: string; // Reason for cancellation
   created_at: string;
   updated_at: string;
-  space?: ParkingSpace;
+  space?: ParkingSpace | null; // Nullable in case space is deleted
 }
 
 export type UserRole = "driver" | "host" | "both";
