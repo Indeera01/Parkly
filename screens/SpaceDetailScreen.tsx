@@ -52,13 +52,6 @@ const SpaceDetailScreen = () => {
     fetchSpaceDetails();
   }, [spaceId]);
 
-  // Check availability when date or time changes
-  useEffect(() => {
-    if (space) {
-      checkAvailability();
-    }
-  }, [bookingDate, startTime, endTime, space]);
-
   // Initialize date and time based on availability when space loads
   useEffect(() => {
     if (space) {
@@ -70,9 +63,29 @@ const SpaceDetailScreen = () => {
           setStartTime(timeRange.start);
           setEndTime(timeRange.end);
         }
+        // Trigger availability check after state updates
+        // Use a small delay to ensure state is updated
+        const timer = setTimeout(() => {
+          checkAvailability();
+        }, 50);
+        return () => clearTimeout(timer);
+      } else {
+        // Even if no available date, check with current date/time
+        const timer = setTimeout(() => {
+          checkAvailability();
+        }, 50);
+        return () => clearTimeout(timer);
       }
     }
   }, [space]);
+
+  // Check availability when date or time changes, or when space loads
+  useEffect(() => {
+    if (space && bookingDate && startTime && endTime) {
+      // Only check if we have valid date and time values
+      checkAvailability();
+    }
+  }, [bookingDate, startTime, endTime, space]);
 
   const fetchSpaceDetails = async () => {
     try {
